@@ -128,7 +128,4 @@ If you have any questions or suggestions, feel free to reach out:
 
 ---
 
-### Notes:
-- Replace placeholders like `your-username`, `your-linkedin-profile`, and `your-email@example.com` with your actual details.
-- Add screenshots in the appropriate section and update their file paths.
-- Ensure the `LICENSE` file is in your project directory if you reference it.
+
