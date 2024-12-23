@@ -14,9 +14,9 @@ import numpy as np
 from scipy.stats import norm
 import time
 
-us_stocks = r"C:\Users\herop\Downloads\python\USStocks.xlsx"
-uk_stocks = r"C:\Users\herop\Downloads\python\UKStocks.xlsx"
-ind_stocks = r"C:\Users\herop\Downloads\python\INDStocks.xlsx"
+us_stocks = r"USStocks.xlsx"
+uk_stocks = r"UKStocks.xlsx"
+ind_stocks = r"INDStocks.xlsx"
 def set_region(country):
     if country == 'India':
         df = ind_stocks
@@ -440,16 +440,6 @@ tail_losses = [loss for loss in scenario_returns if loss <= -var]
 cvar = -np.mean(tail_losses)
 # Display results
 col1, col2, col3, col4 = st.columns(4)
-
-#with st.spinner('Calculating standard deviation...'):
-#    time.sleep(5)
-#with st.spinner('Calculating sharpe ratio...'):
-#    time.sleep(5)
-#with st.spinner('Running 10000 Monte Carlo simulations...'):
-#    time.sleep(5)
-#with st.spinner('Calculating VaR...'):
-#    time.sleep(5)
-
 
 with col1:
     with st.container():
