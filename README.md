@@ -1,7 +1,6 @@
 # Equity-Assistant
-Here’s a `README.md` template for your project:
 
-# Ekalavya Portfolio Assistant 💬
+# Portfolio Assistant 💬
 
 A comprehensive web-based portfolio management tool for investors to analyze, manage, and optimize their stock portfolios. Built with **Streamlit**, this application supports multiple stock markets (India, US, UK) and provides detailed insights, including industry distributions, risk metrics, and optimized portfolio suggestions.
 
