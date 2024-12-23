@@ -94,8 +94,11 @@ A comprehensive web-based portfolio management tool for investors to analyze, ma
 ## Screenshots 🖼️
 
 ![Portfolio Overview](https://github.com/EkalavyaPrasad/Equity-Assistant/blob/d9485abfc2221ccfee67c5098ac9917417d6604d/EPA%20SS1.png)
-![Risk Metrics](path/to/screenshot2.png)
-![Optimized Portfolio](path/to/screenshot3.png)
+![Portfolio_df](https://github.com/EkalavyaPrasad/Equity-Assistant/blob/d9485abfc2221ccfee67c5098ac9917417d6604d/EPA%20SS2.png)
+![Portfolio Summary](https://github.com/EkalavyaPrasad/Equity-Assistant/blob/d9485abfc2221ccfee67c5098ac9917417d6604d/EPA%20SS3.png)
+![Portfolio Optimisation](https://github.com/EkalavyaPrasad/Equity-Assistant/blob/d9485abfc2221ccfee67c5098ac9917417d6604d/EPA%20SS4.png)
+![AI Report Generation](https://github.com/EkalavyaPrasad/Equity-Assistant/blob/d9485abfc2221ccfee67c5098ac9917417d6604d/EPA%20SS5.png)
+
 
 ---
 
