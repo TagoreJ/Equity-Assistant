@@ -108,6 +108,8 @@ A comprehensive web-based portfolio management tool for investors to analyze, ma
 - Real-time data integration with APIs.
 - Enhanced visualizations with interactive charts.
 - Integration with brokerage accounts for live portfolio tracking.
+- Fixing UK Stock Ticker Issue.
+- Improved Error Handling
 
 ---
 
