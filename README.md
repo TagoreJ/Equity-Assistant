@@ -1,7 +1,3 @@
-Here’s a refined and improved version of your README file with minor edits for clarity, formatting consistency, and professionalism:
-
----
-
 # Equity-Assistant
 
 ## Portfolio Assistant 💬
@@ -77,14 +73,14 @@ Ensure the following are installed on your system:
 5. **Run the Application:**  
    Start the application using Streamlit:  
    ```bash
-   streamlit run main.py
+   streamlit run app.py
    ```  
 
 ---
 
 ## File Structure 📁  
 
-- `main.py`: Main application script.  
+- `app.py`: Main application script.  
 - `downloads/python/`: Directory to store stock data files.  
   - `USStocks.xlsx`, `UKStocks.xlsx`, `INDStocks.xlsx`: Stock data for respective regions.  
 - `requirements.txt`: List of Python dependencies.  
