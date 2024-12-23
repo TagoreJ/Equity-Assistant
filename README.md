@@ -93,7 +93,7 @@ A comprehensive web-based portfolio management tool for investors to analyze, ma
 
 ## Screenshots 🖼️
 
-![Portfolio Overview](/EPA SS1.png)
+![Portfolio Overview](EPA SS1.png)
 ![Risk Metrics](path/to/screenshot2.png)
 ![Optimized Portfolio](path/to/screenshot3.png)
 
