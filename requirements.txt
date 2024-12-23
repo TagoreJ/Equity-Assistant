@@ -1,6 +1,7 @@
 duckduckgo-search
 pandas
 pillow
+ollama
 requests
 langchain-ollama
 streamlit
