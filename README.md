@@ -170,4 +170,6 @@ Contributions are welcome! To contribute:
 Feel free to reach out with questions or suggestions:  
 - **LinkedIn**: https://www.linkedin.com/in/ekalavya-prasad
 - **Email**: [eklavya.prasad2709@gmail.com](mailto:eklavya.prasad2709@gmail.com)  
-- **GitHub**: [Ekalavya Prasad](https://github.com/EkalavyaPrasad)  
+- **GitHub**: [Ekalavya Prasad](https://github.com/EkalavyaPrasad)
+- **portfolio**: https://www.ekalavyaprasad.com
+- **Read about this project on my Blog**: https://bsidianblog.vercel.app/
