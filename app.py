@@ -1,579 +1,299 @@
-from duckduckgo_search import DDGS
 import pandas as pd
-from PIL import Image, ImageDraw, ImageOps
-import requests
-from io import BytesIO
-import streamlit as st
-import base64
-import datetime
-import yfinance as yf
-import matplotlib.pyplot as plt
-from scipy.optimize import minimize
-from datetime import datetime, timedelta
 import numpy as np
-from scipy.stats import norm
-import time
+import yfinance as yf
+import streamlit as st
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime, timedelta
 
-us_stocks = r"USStocks.xlsx"
-uk_stocks = r"UKStocks.xlsx"
-ind_stocks = r"INDStocks.xlsx"
+# --- Load your stock list files once here ---
+us_stocks = pd.read_excel("USStocks.xlsx")
+uk_stocks = pd.read_excel("UKStocks.xlsx")
+ind_stocks = pd.read_excel("INDStocks.xlsx")
+
+# --- Utility: Load selected region ---
 def set_region(country):
     if country == 'India':
-        df = ind_stocks
+        return ind_stocks
     elif country == 'US':
-        df = us_stocks
+        return us_stocks
     elif country == 'UK':
-        df = uk_stocks
-    return df
-
-
-# Function to create circular logos
-def make_logo(company):
-    try:
-        results = DDGS().images(
-            keywords=company + ' minimal Favicon',
-            region="wt-wt",
-            safesearch="off",
-            max_results=1,
-        )
-        image_url = results[0]['image']
-        response = requests.get(image_url) 
-        img = Image.open(BytesIO(response.content))
-    except:
-        img = Image.new("RGB", (200, 200), (255, 255, 255))
-    width, height = img.size
-    min_dim = min(width, height)
-    left = (width - min_dim) // 2
-    top = (height - min_dim) // 2
-    right = left + min_dim
-    bottom = top + min_dim
-    img = img.crop((left, top, right, bottom))
-
-    # Create a circular mask
-    mask = Image.new("L", img.size, 0)
-    draw = ImageDraw.Draw(mask)
-    draw.ellipse((0, 0, img.size[0], img.size[1]), fill=255)
-
-    # Apply the mask to make the image round
-    img = ImageOps.fit(img, mask.size, centering=(0.5, 0.5))
-    img.putalpha(mask)
-    img = img.convert("RGBA")
-    return img
-
-# Convert PIL image to base64 string
-def pil_to_base64(img):
-    buffer = BytesIO()
-    img.save(buffer, format="PNG")
-    return base64.b64encode(buffer.getvalue()).decode()
-
-def classify_mcap(mcap):
-    if region == 'India':
-        if mcap < 240:
-            return "Small"
-        elif mcap > 1200:
-            return "Large"
-        else:
-            return "Mid"
+        return uk_stocks
     else:
-        if mcap < 2:
-            return "Small"
-        elif mcap > 10:
-            return "Large"
+        return pd.DataFrame()
+
+# --- Calculate portfolio value for selected stocks and shares ---
+def get_portfolio_data(df, stock_num_dict):
+    portfolio_df = df[df['Company Name'].isin(stock_num_dict.keys())].copy()
+    portfolio_df['Number of Shares'] = portfolio_df['Company Name'].map(stock_num_dict).fillna(0).astype(int)
+    
+    # Fetch current prices
+    prices = []
+    for ticker in portfolio_df['Ticker']:
+        try:
+            price = yf.Ticker(ticker).history(period="1d")['Close'].iloc[-1]
+        except Exception:
+            price = np.nan
+        prices.append(price)
+    portfolio_df['Current Price'] = prices
+    
+    portfolio_df['Total Value'] = portfolio_df['Current Price'] * portfolio_df['Number of Shares']
+    return portfolio_df.dropna(subset=['Current Price'])
+
+# --- Fetch historical price data for tickers ---
+@st.cache_data(show_spinner=False)
+def fetch_price_data(tickers, period='5y'):
+    data = {}
+    for tk in tickers:
+        try:
+            df = yf.Ticker(tk).history(period=period)[['Close']]
+            df.rename(columns={'Close': tk}, inplace=True)
+            data[tk] = df[tk]
+        except Exception:
+            data[tk] = pd.Series(dtype=float)
+    price_df = pd.concat(data.values(), axis=1)
+    price_df.columns = data.keys()
+    price_df.dropna(how='all', inplace=True)
+    return price_df
+
+# --- Compute portfolio log returns ---
+def calc_log_returns(price_df):
+    return np.log(price_df / price_df.shift(1)).dropna()
+
+# --- Plot historical price charts for each stock ---
+def plot_historical_prices(price_df):
+    st.subheader("Historical Stock Price Charts")
+    for ticker in price_df.columns:
+        st.line_chart(price_df[ticker], height=200, use_container_width=True, key=f"price_{ticker}")
+
+# --- Plot portfolio cumulative returns ---
+def plot_cumulative_returns(log_returns, weights):
+    st.subheader("Portfolio Cumulative Returns")
+    weighted_returns = log_returns.dot(weights)
+    cumulative = np.exp(weighted_returns.cumsum())
+    st.line_chart(cumulative, height=300)
+
+# --- Plot correlation heatmap ---
+def plot_correlation_heatmap(log_returns):
+    st.subheader("Correlation Heatmap")
+    fig, ax = plt.subplots(figsize=(10,8))
+    sns.heatmap(log_returns.corr(), annot=True, cmap='coolwarm', ax=ax)
+    st.pyplot(fig)
+
+# --- Calculate and plot drawdowns ---
+def plot_drawdowns(price_df):
+    st.subheader("Max Drawdown Periods")
+    drawdowns = {}
+    for ticker in price_df.columns:
+        cum_max = price_df[ticker].cummax()
+        drawdown = (price_df[ticker] - cum_max) / cum_max
+        drawdowns[ticker] = drawdown.min()
+    drawdown_df = pd.Series(drawdowns).sort_values()
+    st.bar_chart(drawdown_df)
+
+# --- Dividends calendar ---
+@st.cache_data
+def fetch_dividends(tickers):
+    dividends = {}
+    now = datetime.today()
+    future = now + timedelta(days=90)  # next 3 months
+    for ticker in tickers:
+        try:
+            d = yf.Ticker(ticker).dividends
+            upcoming = d[d.index > now]
+            dividends[ticker] = upcoming
+        except Exception:
+            dividends[ticker] = pd.Series(dtype='float64')
+    return dividends
+
+def show_dividend_calendar(dividends):
+    st.subheader("Upcoming Dividends (next 3 months)")
+    for ticker, divs in dividends.items():
+        if len(divs) > 0:
+            st.write(f"**{ticker}:**")
+            for date, amount in divs.items():
+                st.write(f"- {date.date()}: {amount:.2f}")
+
+# --- Portfolio metrics: PE, EPS, etc ---
+@st.cache_data
+def fetch_fundamentals(tickers):
+    fundamentals = {}
+    for ticker in tickers:
+        try:
+            info = yf.Ticker(ticker).info
+            fundamentals[ticker] = {
+                'PE Ratio': info.get('trailingPE', np.nan),
+                'Dividend Yield': info.get('dividendYield', np.nan),
+                'EPS': info.get('trailingEps', np.nan),
+                'ROE': info.get('returnOnEquity', np.nan),
+                'Debt to Equity': info.get('debtToEquity', np.nan),
+            }
+        except Exception:
+            fundamentals[ticker] = None
+    return fundamentals
+
+def display_fundamentals(fundamentals):
+    st.subheader("Fundamental Metrics")
+    df = pd.DataFrame(fundamentals).T
+    st.dataframe(df.style.format("{:.2f}"))
+
+# --- Portfolio rebalancing suggestion ---
+def rebalance_portfolio(portfolio_df, weights, total_value):
+    st.subheader("Rebalancing Suggestions")
+    portfolio_df = portfolio_df.copy()
+    portfolio_df['Optimized Weight'] = weights
+    portfolio_df['Current Value'] = portfolio_df['Total Value']
+    portfolio_df['Target Value'] = portfolio_df['Optimized Weight'] * total_value
+    portfolio_df['Difference ($)'] = portfolio_df['Target Value'] - portfolio_df['Current Value']
+    portfolio_df['Action'] = portfolio_df['Difference ($)'].apply(lambda x: 'Buy' if x > 0 else 'Sell')
+    portfolio_df['Shares to Trade'] = (portfolio_df['Difference ($)'] / portfolio_df['Current Price']).abs().round(0).astype(int)
+    st.table(portfolio_df[['Company Name', 'Current Value', 'Optimized Weight', 'Target Value', 'Difference ($)', 'Action', 'Shares to Trade']])
+
+# --- Alerts system ---
+def user_alerts(portfolio_df):
+    st.subheader("Set Price Alerts")
+    alerts = {}
+    for idx, row in portfolio_df.iterrows():
+        price_alert = st.number_input(f"Alert Price for {row['Company Name']} ({row['Ticker']})", value=float(row['Current Price']))
+        alerts[row['Ticker']] = price_alert
+    
+    st.write("### Price Alert Status")
+    for ticker, alert_price in alerts.items():
+        current_price = portfolio_df.loc[portfolio_df['Ticker'] == ticker, 'Current Price'].values[0]
+        if current_price > alert_price:
+            st.markdown(f"**{ticker}** price is above alert: {current_price:.2f} > {alert_price:.2f} 🔔")
         else:
-            return "Mid"
+            st.markdown(f"{ticker}: price below alert.")
 
+# --- Benchmark comparison ---
+@st.cache_data
+def fetch_benchmark_data(benchmark_symbol, period='5y'):
+    return yf.Ticker(benchmark_symbol).history(period=period)['Close']
 
+def plot_benchmark_comparison(portfolio_log_returns, benchmark_log_return):
+    st.subheader("Portfolio vs Benchmark Returns")
+    portfolio_cum = np.exp(portfolio_log_returns.cumsum())
+    benchmark_cum = np.exp(benchmark_log_return.cumsum())
+    combined_df = pd.DataFrame({'Portfolio': portfolio_cum, 'Benchmark': benchmark_cum})
+    st.line_chart(combined_df)
 
+# --- Risk-adjusted ratios: Sortino (simplified) ---
+def sortino_ratio(log_returns, risk_free_rate=0.0):
+    downside_returns = log_returns[log_returns < 0]
+    expected_return = log_returns.mean() * 252
+    downside_std = downside_returns.std() * np.sqrt(252)
+    if downside_std == 0:
+        return np.nan
+    return (expected_return - risk_free_rate) / downside_std
 
-def get_daily_returns(ticker):
-    stock = yf.Ticker(ticker)
-    stock_info = stock.history(period="5d") 
-    latest_price = stock_info['Close'].iloc[-1]
-    prev_price = stock_info['Close'].iloc[-2]
-    daily_returns = (latest_price - prev_price)
-    return f'{daily_returns:.2f}'
+# --- Monte Carlo Simulation of portfolio growth ---
+def monte_carlo_simulation(log_returns, weights, start_value=10000, years=5, sims=1000):
+    st.subheader("Monte Carlo Simulation of Portfolio Value")
+    mean_returns = log_returns.mean() * 252
+    cov = log_returns.cov() * 252
+    port_mean = np.dot(weights, mean_returns)
+    port_std = np.sqrt(np.dot(weights.T, np.dot(cov, weights)))
 
-def get_daily_return_percentage(ticker):
-    stock = yf.Ticker(ticker)
-    stock_info = stock.history(period="5d") 
-    latest_price = stock_info['Close'].iloc[-1]
-    prev_price = stock_info['Close'].iloc[-2]
-    daily_percent = (latest_price - prev_price)/prev_price*100
-    return f'{daily_percent:.2f}'
+    dt = 1/252
+    iterations = int(years * 252)
+    results = np.zeros((iterations, sims))
+    for sim in range(sims):
+        shock = np.random.normal(loc=(port_mean - 0.5 * port_std ** 2) * dt,
+                                 scale=port_std * np.sqrt(dt),
+                                 size=iterations)
+        price_paths = start_value * np.exp(np.cumsum(shock))
+        results[:, sim] = price_paths
+    
+    # Plot percentile bands
+    percentiles = [5, 25, 50, 75, 95]
+    df = pd.DataFrame(results)
+    fig, ax = plt.subplots(figsize=(12, 6))
+    for p in percentiles:
+        ax.plot(df.quantile(p / 100, axis=1), label=f'{p}th Percentile')
+    ax.set_title('Monte Carlo Simulation - Portfolio Value Over Time')
+    ax.set_xlabel('Trading Days')
+    ax.set_ylabel('Portfolio Value')
+    ax.legend()
+    st.pyplot(fig)
 
-# Function to generate a portfolio dataframe with logos
-def generate_portfolio(df):
-    industry_list = []
-    logo_list = []
-    mcap_list = []
-    class_mcap_list = []
-    price_list = []
-    for name in df['Company Name']:
-        logo = make_logo(name)
-        logo_base64 = f'data:image/png;base64,{pil_to_base64(logo)}'
-        logo_list.append(logo_base64)
+# ------------- Streamlit UI starts here ----------------
 
-    df.insert(0, 'Logo', logo_list)
-
-    for ticker in df['Ticker']:
-        stock = yf.Ticker(ticker)
-        industry = stock.info.get("industry")
-        industry_list.append(industry)
-    df.insert(3, 'Industry', industry_list)
-
-    for ticker in df['Ticker']:
-        stock = yf.Ticker(ticker)
-        mcap = stock.info.get("marketCap")
-        if mcap is not None:
-            mcap_list.append(f'{mcap/1000000000:.2f}')
-        else:
-            mcap_list.append('Error')
-    df.insert(4, 'Market Cap', mcap_list)
-
-    for ticker in df['Ticker']:
-        stock = yf.Ticker(ticker)
-        mcap = stock.info.get("marketCap")
-        if mcap is not None:
-            mcap_class = classify_mcap(stock.info.get("marketCap")/1000000000)
-        else:
-            mcap_class = 'Error'
-        class_mcap_list.append(mcap_class)
-    df.insert(5, 'Market Cap Size', class_mcap_list)
-
-    for price in df['Ticker']:
-        stock = yf.Ticker(price)
-        stock_info = stock.history(period="1d") 
-        latest_price = stock_info['Close'].iloc[-1]  
-        price_list.append(f'{latest_price:.2f}')
-    df.insert(6, 'Current Price', price_list)
-
-    beta_list = []
-    for ticker in df['Ticker']:
-        stock = yf.Ticker(ticker)
-        beta = stock.info.get("beta")
-        beta_list.append(beta)
-    df.insert(7, 'Beta', beta_list)
-    return df
-
-st.set_page_config(
-    page_title='Chat Playground',
-    page_icon="💬",
-    layout='wide',
-    initial_sidebar_state='expanded'
-)
-st.header('Ekalavya Portfolio Assistant')
-
+st.title("Enhanced Portfolio Dashboard")
 
 region = st.selectbox('Choose your Exchange', ['India', 'US', 'UK'])
-if region == 'India':
-    regdf = ind_stocks
-elif region == 'US':
-    regdf = us_stocks
-elif region == 'UK':
-    regdf = uk_stocks
+df = set_region(region)
 
-df = pd.read_excel(regdf)
-options = st.multiselect('Choose your companies', df['Company Name'])
+options = st.multiselect('Select Companies', df['Company Name'])
 
-portfolio_df = generate_portfolio(df[df['Company Name'].isin(options)])
+if options:
+    initial_shares = {name: 1 for name in options}  # default one share per stock
 
-stock_list = portfolio_df['Company Name'].tolist()   
-ticker_list = portfolio_df['Ticker'].tolist()
+    with st.form("shares_form"):
+        st.write("Modify number of shares per stock:")
+        for stock in options:
+            initial_shares[stock] = st.number_input(stock, min_value=0, value=initial_shares[stock], step=1)
+        submitted = st.form_submit_button("Update Portfolio")
 
-with st.sidebar:
-    buy_date = st.select_slider("Enter Time Frame", options=['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max'], value='1y')
-    def get_total_returns(ticker):
-        try:
-            def_stock = yf.Ticker(ticker)
-            stock_info = def_stock.history(period=buy_date)
-            latest_price = stock_info['Close'].iloc[-1]
-            oldest_price = stock_info['Close'].iloc[0]
-        except (IndexError, ValueError):
-            stock_info = yf.Ticker(ticker).history(period='max')
-            latest_price = stock_info['Close'].iloc[-1]
-            oldest_price = stock_info['Close'].iloc[0]
-        total_returns = latest_price - oldest_price
-        return float(total_returns) if pd.notnull(total_returns) else 0 
-    with st.form("Modify Portfolio"):
-        st.write("Modify Number of Stocks")
-        stock_num_dict = {}
-        for stock in stock_list:
-            my_number = int(st.number_input(stock, 1, 9999999, value=1 , step=1))
-            print(my_number)
-            stock_num_dict[stock] = my_number
-        st.form_submit_button('Modify Portfolio')
-    
-        portfolio_df['Number of Shares'] = portfolio_df['Company Name'].map(stock_num_dict)
-        portfolio_df['Current Price'] = pd.to_numeric(portfolio_df['Current Price'], errors='coerce')
+    portfolio_df = get_portfolio_data(df, initial_shares)
 
-        portfolio_df['Total Value'] = portfolio_df['Current Price'] * portfolio_df['Number of Shares']
-        portfolio_df['Allocation (%)'] = (portfolio_df['Total Value'] / portfolio_df['Total Value'].sum()) * 100
-        portfolio_df['Allocation (%)'] = portfolio_df['Allocation (%)'].apply(lambda x: f'{x:.2f}')
+    if portfolio_df.empty:
+        st.warning("No valid price data for selected stocks.")
+    else:
+        tickers = portfolio_df['Ticker'].tolist()
 
-        portfolio_df['Daily Return'] = (pd.to_numeric(portfolio_df['Ticker'].apply(get_daily_returns)))*pd.to_numeric(portfolio_df['Number of Shares'])
-        portfolio_df['Daily Return (in %)'] = portfolio_df['Ticker'].apply(get_daily_return_percentage)
-        portfolio_df['Total Returns'] = portfolio_df['Ticker'].apply(get_total_returns) * pd.to_numeric(portfolio_df['Number of Shares'], errors='coerce')
+        # Display portfolio dataframe summary
+        st.subheader("Portfolio Summary")
+        st.dataframe(portfolio_df[['Company Name', 'Ticker', 'Number of Shares', 'Current Price', 'Total Value']])
 
-    var_days = st.number_input('Number of Days for VaR Calculation', min_value=1, max_value=9999999, value=5, step=1)
-    var_conf_interval = st.number_input('Confidence Interval for VaR Calculation', min_value=float(0), max_value=1.00, value=0.95, step=0.01)
-    rf_rate = st.number_input('Risk Free Rate in (%)', min_value=float(0), max_value=float(100), value=7.365, step=0.01)
-portfolio_df['Logo'] = portfolio_df['Logo'].apply(
-    lambda x: f'<img src="{x}" width="50" style="border-radius: 50%;" />')
+        # Fetch historical data
+        price_df = fetch_price_data(tickers)
+        log_returns = calc_log_returns(price_df)
 
-st.markdown(
-    f"""
-    <div style="overflow-x: auto; text-align: left;">
-        {portfolio_df.to_html(
-            escape=False,
-            index=False,
-            classes='dataframe').replace('<th>', '<th style="text-align: center;">')}
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-st.divider()
-
-st.subheader('Portfolio Summary:')
-
-# Create a Pie Chart
-
-# Show the chart
-row1, row2, row3 = st.columns(3)
-
-with row1:
-
-    market_cap_summary = portfolio_df['Market Cap Size'].value_counts()
-    values = market_cap_summary.tolist()
-    labels = market_cap_summary.index.tolist()
-
-    fig, ax = plt.subplots(figsize=(10, 10))
-    fig.patch.set_alpha(0)  
-    ax.pie(
-        values,
-        labels=labels,
-        autopct='%1.1f%%', 
-        textprops={'color': 'white'},  
-        startangle=90
-    )
-    st.pyplot(fig)
-    st.text('Market Cap Distribution')
-
-with row2:
-    
-    industry_summary = portfolio_df['Industry'].value_counts()
-    ind_values = industry_summary.tolist()
-    ind_labels = industry_summary.index.tolist()
-
-    fig, ax = plt.subplots(figsize=(10, 10))
-    fig.patch.set_alpha(0) 
-    ax.pie(
-        ind_values,
-        labels=ind_labels,
-        textprops={'color': 'white'}, 
-        startangle=90,
-        labeldistance=0.3  
-
-    )
-    st.pyplot(fig)
-    st.text('Industry Distribution')
-
-with row3:
-    company_summary = portfolio_df[['Company Name', 'Allocation (%)']] 
-    comp_values = company_summary['Allocation (%)'].values
-    comp_labels = company_summary['Company Name'].tolist()
-
-    fig, ax = plt.subplots(figsize=(10, 10))
-    fig.patch.set_alpha(0) 
-    ax.pie(
-        comp_values,
-        labels=comp_labels,
-        textprops={'color': 'white'}, 
-        startangle=90,
-        labeldistance=0.3  
-
-    )
-    st.pyplot(fig)
-    st.text('Company Distribution')
-
-st.divider()
-st.subheader('Portfolio Performance:')
-
-st.markdown(
-    """
-    <style>
-    .center-text {
-        text-align: center;
-    }
-    .green {
-        color: green;
-        font-weight: bold;
-    }
-    .red {
-        color: red;
-        font-weight: bold;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    with st.container():
-        st.write('<div class="center-text">Total Portfolio Value</div>', unsafe_allow_html=True)
+        # Calculate current allocation weights by value
         total_value = portfolio_df['Total Value'].sum()
-        st.markdown(
-            f'<div class="center-text">{total_value:,.2f}</div>',
-            unsafe_allow_html=True,
-        )
+        weights = portfolio_df['Total Value'] / total_value
 
-with col2:    
-    with st.container():
-        st.write('<div class="center-text">Total Portfolio Return</div>', unsafe_allow_html=True)
-        total_returns = portfolio_df['Total Returns'].sum()
-        color = "green" if total_returns >= 0 else "red"
-        st.markdown(
-            f'<div class="center-text {color}">{total_returns:,.2f}</div>',
-            unsafe_allow_html=True,
-        )
+        # Show key analytics and charts
+        plot_historical_prices(price_df)
+        plot_cumulative_returns(log_returns, weights)
+        plot_correlation_heatmap(log_returns)
+        plot_drawdowns(price_df)
 
-with col3:
-    with st.container():
-        st.write('<div class="center-text">Daily Gain/Loss</div>', unsafe_allow_html=True)
-        daily_gain_loss = pd.to_numeric(portfolio_df["Daily Return"], errors="coerce").sum()
-        color = "green" if daily_gain_loss >= 0 else "red"
-        st.markdown(
-            f'<div class="center-text {color}">{daily_gain_loss:,.2f}</div>',
-            unsafe_allow_html=True,
-        )
+        # Fetch and display fundamentals
+        fundamentals = fetch_fundamentals(tickers)
+        display_fundamentals(fundamentals)
 
-with col4:
-    with st.container():
-        portfolio_df["Allocation (%)"] = pd.to_numeric(portfolio_df["Allocation (%)"], errors="coerce")
-        portfolio_df["Daily Return (in %)"] = pd.to_numeric(portfolio_df["Daily Return (in %)"], errors="coerce")
+        # Optimization example placeholder (weights optimization code can be plugged here)
+        # For demo, we'll just simulate with current weights
+        rebalance_portfolio(portfolio_df, weights.values, total_value)
 
-        st.write('<div class="center-text">Daily Gain/Loss %</div>', unsafe_allow_html=True)
-        daily_gain_loss_percent = pd.to_numeric(portfolio_df["Daily Return (in %)"]*portfolio_df["Allocation (%)"], errors="coerce").sum()
-        color = "green" if daily_gain_loss_percent >= 0 else "red"
-        st.markdown(
-            f'<div class="center-text {color}">{daily_gain_loss_percent/100:,.2f}%</div>',
-            unsafe_allow_html=True,
-        )
+        # Alerts system
+        user_alerts(portfolio_df)
 
-st.divider()
+        # Dividends Calendar
+        dividends = fetch_dividends(tickers)
+        show_dividend_calendar(dividends)
 
-st.subheader('Risk Metrics:')
+        # Benchmark comparison
+        benchmark_dict = {
+            'India': '^NSEI',  # Nifty 50
+            'US': '^GSPC',     # S&P 500
+            'UK': '^FTSE',
+        }
+        benchmark_symbol = benchmark_dict.get(region, None)
+        if benchmark_symbol:
+            benchmark_price = fetch_benchmark_data(benchmark_symbol)
+            benchmark_log = np.log(benchmark_price / benchmark_price.shift(1)).dropna()
+            portfolio_returns = log_returns.dot(weights)
+            plot_benchmark_comparison(portfolio_returns, benchmark_log)
 
-tickers = portfolio_df['Ticker'].tolist()
-end_date = datetime.today()
-start_date = end_date - timedelta(days=365 * 5)
+        # Risk Adjusted Ratios
+        st.subheader("Risk Adjusted Performance")
+        st.write(f"Sortino Ratio: {sortino_ratio(log_returns.dot(weights)):.2f}")
 
-adj_close_df = pd.DataFrame()
-for ticker in tickers:
-    data = yf.download(ticker, start=start_date, end=end_date)
-    adj_close_df[ticker] = data['Close']
+        # Monte Carlo Simulation
+        monte_carlo_simulation(log_returns, weights.values)
 
-# Calculate log returns
-log_returns = np.log(adj_close_df / adj_close_df.shift(1))
-log_returns = log_returns.dropna()
+else:
+    st.info("Select one or more companies above to begin analysis.")
 
-# Covariance matrix
-cov_matrix = log_returns.cov() * 252
-
-# Define functions
-def standard_deviation(weights, cov_matrix):
-    variance = weights.T @ cov_matrix @ weights
-    return np.sqrt(variance)
-
-def expected_returns(weights, log_returns):
-    mean_returns = log_returns.mean()*252
-    return np.dot(weights, mean_returns)
-
-def sharpe_ratio(weights, log_returns, risk_free_rate, cov_matrix):
-    return (expected_returns(weights, log_returns) - risk_free_rate) / standard_deviation(weights, cov_matrix)
-
-def neg_sharpe_ratio(weights, log_returns, cov_matrix, risk_free_rate):
-    return -sharpe_ratio(weights, log_returns, risk_free_rate, cov_matrix)
-
-# Optimization
-risk_free_rate = rf_rate / 100
-constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})  
-bounds = [(0.05, 0.5) for _ in range(len(tickers))]  
-initial_weights = portfolio_df['Allocation (%)'].values / 100
-
-optimized_results = minimize(
-    neg_sharpe_ratio, 
-    initial_weights, 
-    args=(log_returns, cov_matrix, risk_free_rate), 
-    method='SLSQP', 
-    bounds=bounds, 
-    constraints=constraints
-)
-
-optimal_weights = optimized_results.x
-
-#VaR and CVar Calculation. 
-#Get random z-score based on the number of assets in the portfolio.
-def random_z_score():
-    return np.random.normal(0,1)
-
-days = var_days
-portfolio_value = portfolio_df['Total Value'].sum()
-portfolio_expected_return = expected_returns(initial_weights, log_returns)*252
-portfolio_std_dev = standard_deviation(initial_weights, cov_matrix)
-def scenario_gain_loss(portfolio_value, portfolio_std_dev, z_score, days):
-    return portfolio_value * (portfolio_expected_return/252) *days + portfolio_value * portfolio_std_dev*z_score*np.sqrt(days)
-
-simulations = 10000
-scenario_returns = []
-
-for i in range(simulations):
-    z_score = random_z_score()
-    scenario_returns.append(scenario_gain_loss(portfolio_value, portfolio_std_dev, z_score, days))
-
-confidence_interval = var_conf_interval
-var = -np.percentile(scenario_returns, (1 - confidence_interval) * 100)
-
-tail_losses = [loss for loss in scenario_returns if loss <= -var]
-cvar = -np.mean(tail_losses)
-# Display results
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    with st.container():
-        st.write('<div class="center-text">Volatility</div>', unsafe_allow_html=True)
-        stddev = standard_deviation(initial_weights, cov_matrix)*100
-        st.markdown(
-            f'<div class="center-text">{stddev:,.2f}%</div>',
-            unsafe_allow_html=True,
-        )
-
-with col2:
-    with st.container():
-        st.write('<div class="center-text">Sharpe Ratio</div>', unsafe_allow_html=True)
-        s_ratio = sharpe_ratio(initial_weights, log_returns, risk_free_rate, cov_matrix)
-        st.markdown(
-            f'<div class="center-text">{s_ratio:,.2f}</div>',
-            unsafe_allow_html=True,
-        )
-
-with col3:
-    with st.container():
-        st.write('<div class="center-text">VaR</div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<div class="center-text">{var:.2f}</div>',
-            unsafe_allow_html=True,
-        )
-
-with col4:
-    with st.container():
-        st.write('<div class="center-text">CVaR</div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<div class="center-text">{cvar:.2f}</div>',
-            unsafe_allow_html=True,
-        )
-
-
-st.divider()
-total_value = portfolio_df['Total Value'].sum()
-
-number_of_shares = [
-    (weight * total_value) / price
-    for weight, price in zip(optimal_weights, portfolio_df['Current Price'])
-]
-data = {
-    'Ticker': tickers,
-    'Optimised Weights': [f'{weight * 100:.2f}%' for weight in optimal_weights],
-    'Number of Shares': [f'{shares:.0f}' for shares in number_of_shares],
-}
-weights_df = pd.DataFrame(data)
-with st.expander('Optimised Portfolio'):
-    st.subheader('Optimised Portfolio') 
-    st.table(weights_df)  
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        with st.container():
-            st.write('<div class="center-text">Volatility</div>', unsafe_allow_html=True)
-            opti_stddev = standard_deviation(optimal_weights, cov_matrix)*100
-            st.markdown(
-                f'<div class="center-text">{opti_stddev:,.2f}%</div>',
-                unsafe_allow_html=True,
-            )
-
-    with col2:
-        with st.container():
-            st.write('<div class="center-text">Sharpe Ratio</div>', unsafe_allow_html=True)
-            opti_s_ratio = sharpe_ratio(optimal_weights, log_returns, risk_free_rate, cov_matrix)
-            st.markdown(
-                f'<div class="center-text">{opti_s_ratio:,.2f}</div>',
-                unsafe_allow_html=True,
-            )
-
-    with col3:
-        with st.container():
-            st.write('<div class="center-text">Expected Returns</div>', unsafe_allow_html=True)
-            er = expected_returns(optimal_weights, log_returns)*100
-            st.markdown(
-                f'<div class="center-text">{er:.2f}%</div>',
-                unsafe_allow_html=True,
-            )
-
-
-st.divider()
-from langchain_ollama import ChatOllama
-
-
-def ai_report(df, other_info):
-    other_info = f'{other_info}'
-    llm = ChatOllama(
-        model="llama3:latest",
-        temperature=0.2
-    )
-    messages = [
-    ("system", """You are a portfolio and equity analyst  writer and You have to generate reports like one. Never answer in first person. \
-     Your job is to take portfolio data and convert them into insightful portfolio reports. You will recieve user's portfolio and your task is to create reports out of them. Give comprehensive explainations of all the figures and provide recommendations on the choice of stocks that the user has chosen. Make your answers detailed and in-depth.  \
-     each section should contain a short paragraph on what the section is about, what qualities in a portfolio makes the section 'good' and whether the user portfolio satisfies the qualities. \
-     for example: Industry composition: this helps us understand diversification. Diversification is important because it makes sure that our portfolio is spread out across different industries. our portfolio is good because it is sufficiently diversified (or) it is bad because it is not sufficiently diversified.\
-     Answer in markdown.\
-     The currency to be used is the local currency of the country\
-     Each heading should have a rating out of 5. \
-     Use the following format: \
-     # Portfolio report \
-     ## Overall portfolio summary \
-     ## Portfolio composition \
-     ## Industry composition \
-     ## Risk analysis \
-     ## Recommendations (if the )"""),
-    ("human", f'My individual stock data is in {df} and my overall stock data is in {other_info}'),
-    ]
-    response = llm.stream(messages)  # Ensure `llm.stream()` yields tokens or chunks of content
-    for chunk in response:
-        yield chunk.content
-
-
-
-ai_report_button = st.button('Generate AI report', use_container_width=True)
-
-portfolio_info = f"""Total portfolio value: {total_value:,.2f}\
-portfolio industry distribution: {portfolio_df['Industry'].value_counts()}\
-Name of invested stocks: {portfolio_df['Company Name']}\
-total portfolio return: {total_returns:,.2f}\
-daily gain/loss: {daily_gain_loss:,.2f}\
-risk metrics: \
-standard deviation: {stddev:,.2f}%\
-sharpe ratio: {s_ratio:,.2f}\
-expected returns: {expected_returns(initial_weights, log_returns)*100:,.2f}%\
-VaR: {var:,.2f} where the confidence interval is {var_conf_interval:,.2f} and the time period is {days} days\
-CVaR: {cvar:,.2f}\
-"""
-
-if ai_report_button:
-    with st.spinner('Generating AI report...'):
-        report_placeholder = st.empty()  # Placeholder for streaming text
-        report_text = ""  # Initialize an empty report text
-        for chunk in ai_report(portfolio_df, portfolio_info):
-            report_text += chunk  # Append each chunk to the text
-            report_placeholder.markdown(report_text) 
